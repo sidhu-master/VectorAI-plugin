@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createEmptyDrawing, type DimensionAnnotation } from '@vectorai/drawing-core';
-import { canonicalRuleInputDigest, createGbt1800Provider, type EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
+import { axialDimensionIntentId, canonicalRuleInputDigest, createGbt1800Provider, type EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
 import type { DimensionPlanSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { exportEngineeringDrawingDxf } from './engineering-dxf-export';
+import { exportEngineeringDrawingDxf, projectEngineeringCadDrawing } from './engineering-dxf-export';
 import { inspectCadContract } from './cad-test-inspector';
 import { DimensionPlanStore } from './dimension-plan-store';
 import { createToleranceReconciler, ToleranceService } from './tolerance-service';
@@ -15,6 +15,28 @@ import { createToleranceReconciler, ToleranceService } from './tolerance-service
 const ref = { drawingId: 'drawing-golden', revision: 2 };
 
 describe('exportEngineeringDrawingDxf', () => {
+  it('keeps golden-size lettering at 173 mm and scales annotation furniture for a 286 mm part', () => {
+    const sceneFor = (span: number, annotationScale?: number) => {
+      const document = createEmptyDrawing({ idFactory: { next: () => `drawing-${span}` }, now: () => 1 });
+      document.geometry = [{
+        id: 'outline' as never, type: 'line', start: [0, 0], end: [span, 0], visible: true,
+        quality: { status: 'confirmed', evidenceRefs: [] },
+      }];
+      return projectEngineeringCadDrawing(document, {
+        version: 1, phase: 'idle', drawingRef: { drawingId: document.id, revision: 1 },
+        canUndo: false, canRedo: false, updatedAt: 1,
+      }, { profile: 'caxa-compatible', purpose: 'canvas', annotationScale });
+    };
+
+    const golden = sceneFor(173).profile.dimensionStyles.find(({ name }) => name === 'GB_LINEAR')!;
+    const large = sceneFor(286).profile.dimensionStyles.find(({ name }) => name === 'GB_LINEAR')!;
+    expect(golden.textHeight).toBe(3.5);
+    expect(large.textHeight).toBeCloseTo(3.5 * 286 / 180, 6);
+    expect(large.arrowSize / golden.arrowSize).toBeCloseTo(large.textHeight / golden.textHeight, 6);
+    expect(large.textGap / golden.textGap).toBeCloseTo(large.textHeight / golden.textHeight, 6);
+    expect(sceneFor(286, 1).profile.dimensionStyles.find(({ name }) => name === 'GB_LINEAR')!.textHeight).toBe(3.5);
+  });
+
   it('uses the generic GB profile by default instead of leaking CAXA fixture styles', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'generic-cad' }, now: () => 1 });
 
@@ -25,6 +47,44 @@ describe('exportEngineeringDrawingDxf', () => {
 
     expect(dxf).not.toContain('SLDTEXTSTYLE0');
     expect(dxf).not.toContain('ZWISOGDT');
+  });
+
+  it('maps imported hatch and centerline semantics to golden CAXA layers without duplicating the shaft axis', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-semantic-layers' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    document.geometry = [{
+      id: 'source-centerline' as never, type: 'line', start: [-12, 0], end: [298, 0],
+      visible: true, quality, sourceRef: { sourceId: 'source', objectType: 'LINE', layer: 'CENTERLINE' },
+    }];
+    document.annotations = [
+      {
+        id: 'annotation_centerline_generated' as never, type: 'centerline', start: [0, 0], end: [286, 0], extension: 7.15,
+        targets: [], visible: true, quality,
+      },
+      {
+        id: 'source-hatch' as never, type: 'section-hatch', pattern: 'ANSI31', angle: 45, spacing: 2,
+        visible: true, quality, sourceRef: { sourceId: 'source', objectType: 'HATCH', layer: 'SECTION-HATCH' },
+        hatch: {
+          version: 1, style: 'normal', elevation: 0, extrusion: [0, 0, 1], patternAngle: 0, patternScale: 1, double: false,
+          patternLines: [{ angle: 45, base: [0, 0], offset: [0, 2], dashLengths: [] }],
+          boundaryPaths: [{ flags: 0, closed: true, edges: [
+            { type: 'line', start: [0, 0], end: [10, 0] },
+            { type: 'line', start: [10, 0], end: [10, 5] },
+            { type: 'line', start: [10, 5], end: [0, 5] },
+            { type: 'line', start: [0, 5], end: [0, 0] },
+          ] }],
+        },
+      },
+    ];
+    const idle = {
+      version: 1, phase: 'idle', drawingRef: { drawingId: document.id, revision: 1 },
+      canUndo: false, canRedo: false, updatedAt: 1,
+    } as DimensionPlanSessionSnapshot;
+
+    const dxf = exportEngineeringDrawingDxf(document, idle, { profile: 'caxa-compatible' });
+
+    expect(entityLayers(dxf, 'HATCH')).toEqual(['5剖面线层']);
+    expect(entityLayers(dxf, 'LINE')).toEqual(['3中心线层']);
   });
 
   it('preserves ordered UTF-8 tolerance XDATA chunks through CAD normalization', () => {
@@ -91,7 +151,7 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(inspectCadContract(dxf).symbolPictureColors).toEqual(golden.symbolPictureColors);
   });
 
-  it('exports Ra 0.8 as a machined surface-texture symbol and keeps common datum A-B in one frame cell', () => {
+  it('exports the Ra value without a redundant parameter label and keeps common datum A-B in one frame cell', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-golden' }, now: () => 1 });
     document.geometry = [{
       id: 'shaft' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
@@ -109,7 +169,8 @@ describe('exportEngineeringDrawingDxf', () => {
 
     const dxf = exportEngineeringDrawingDxf(document, plan, { profile: 'caxa-compatible' });
 
-    expect(dxf).toContain('Ra 0.8');
+    expect(dxf).toContain('{\\Fisocp,GBCBIG;\\W0.707;0.8}');
+    expect(dxf.includes('Ra 0.8')).toBe(false);
     expect(dxf).toContain('A-B');
     expect(dxf).not.toContain('A}{\\Fisocp,GBCBIG;\\W0.707;B');
   });
@@ -127,6 +188,25 @@ describe('exportEngineeringDrawingDxf', () => {
 
     expect(dxf).toContain('待计算');
     expect(dxf).toContain('A');
+    expect(dxf).not.toMatch(/0\.00[0-9]/);
+    expect(entityCount(dxf, 'INSERT')).toBe(2);
+  });
+
+  it('exports the visible draft datum and unresolved GD&T symbols without inventing a value', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-visible-draft-symbols' }, now: () => 1 });
+    document.geometry = [{
+      id: 'shaft' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const plan = snapshot({ datumStatus: 'candidate', gdtStatus: 'pending-calculation', computedStatus: 'pending' });
+    plan.phase = 'editing';
+    plan.draft = structuredClone(plan.confirmed!) as DimensionPlanSessionSnapshot['draft'];
+    delete plan.confirmed;
+
+    const dxf = exportEngineeringDrawingDxf(document, plan, { profile: 'caxa-compatible' });
+
+    expect(dxf).toContain('A');
+    expect(dxf).toContain('—');
     expect(dxf).not.toMatch(/0\.00[0-9]/);
     expect(entityCount(dxf, 'INSERT')).toBe(2);
   });
@@ -151,7 +231,7 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(dxf).not.toMatch(/0\.(003|005|01|015)/);
   });
 
-  it('preserves a dimension-chain closure as a native dimension on a dashed CAD layer', () => {
+  it('omits dimension-chain closures from export while retaining ordinary dimensions', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-closure' }, now: () => 1 });
     document.geometry = [{
       id: 'shaft' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
@@ -185,8 +265,21 @@ describe('exportEngineeringDrawingDxf', () => {
 
     const dxf = exportEngineeringDrawingDxf(document, plan);
 
-    expect(dxf).toMatch(/0\r\nLAYER[\s\S]*?2\r\n7标注缺省层[\s\S]*?6\r\nDASHED2/);
-    expect(dxf).toMatch(/0\r\nDIMENSION[\s\S]*?8\r\n7标注缺省层/);
+    expect(nativeDimensions(dxf).map(({ measurement }) => measurement)).toEqual([60]);
+    plan.confirmed!.axialScheme!.hiddenCandidateIds = ['closure'];
+    expect(nativeDimensions(exportEngineeringDrawingDxf(document, plan)).map(({ measurement }) => measurement)).toEqual([60]);
+    plan.confirmed!.axialScheme!.hiddenCandidateIds = [];
+    document.annotations.push({
+      id: 'materialized-closure' as never, type: 'dimension', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] }, associationStatus: 'resolved',
+      dimensionKind: 'linear', targets: [], computedValue: 40, displayText: '40',
+      engineeringIntentId: axialDimensionIntentId('closure'),
+      definitionPoints: [[60, 0], [100, 0], [60, 12], [100, 12]], textPosition: [80, 15],
+    });
+    expect(nativeDimensions(exportEngineeringDrawingDxf(document, plan)).map(({ measurement }) => measurement)).toEqual([60]);
+    expect(document.annotations[0].visible).toBe(true);
+    delete plan.confirmed!.axialScheme!.hiddenCandidateIds;
+    expect(nativeDimensions(exportEngineeringDrawingDxf(document, plan)).map(({ measurement }) => measurement).sort()).toEqual([60]);
   });
 
   it('does not export a prohibited transition used only to close a dimension-chain equation', () => {
@@ -259,6 +352,55 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(long).toBeDefined();
     expect(short).toBeDefined();
     expect(Math.abs(long!.normalCoordinate)).toBeGreaterThan(Math.abs(short!.normalCoordinate));
+  });
+
+  it('moves every synthetic chain member from its paper position by the stored offset without moving witnesses or manual dimensions', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'chain-drag-paper' }, now: () => 1 });
+    document.geometry = [{ id: 'shaft' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] } }];
+    const manual: DimensionAnnotation = {
+      id: 'manual' as never, type: 'dimension', visible: true, dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 20, displayText: 'CUSTOM',
+      definitionPoints: [[0, 0], [20, 0], [0, -12], [20, -12]], textPosition: [10, -15],
+      layout: { mode: 'manual' }, quality: { status: 'confirmed', evidenceRefs: [] },
+    };
+    document.annotations = [manual];
+    const plan = snapshot({ datumStatus: 'confirmed', gdtStatus: 'confirmed', computedStatus: 'resolved', computedValue: 0.015 });
+    const scheme = plan.confirmed!.axialScheme!;
+    scheme.topology.stations = [0, 30, 100].map((value, index) => ({
+      id: `s${index}`, coordinate: value, sourceCoordinate: value, unit: 'mm', kinds: ['shoulder'],
+      geometryNodeIds: ['shaft'], evidenceIds: [],
+    }));
+    scheme.candidates = [
+      { id: 'overall', startStationId: 's0', endStationId: 's2', nominalValue: 100, roles: ['overall'], required: true, evidenceIds: [] },
+      { id: 'child', startStationId: 's0', endStationId: 's1', nominalValue: 30, roles: ['functional'], required: true, evidenceIds: [] },
+      { id: 'closure', startStationId: 's1', endStationId: 's2', nominalValue: 70, roles: ['closure'], required: true, evidenceIds: [] },
+    ];
+    scheme.displayedCandidateIds = ['overall', 'child']; scheme.closureCandidateIds = ['closure'];
+    scheme.chains = [{ id: 'chain', parentCandidateId: 'overall', childCandidateIds: ['child'], closureCandidateId: 'closure', alternativeClosureCandidateIds: [], status: 'resolved' }];
+    const baseline = projectEngineeringCadDrawing(document, plan, { profile: 'caxa-compatible', purpose: 'canvas' });
+    const moved = structuredClone(plan);
+    moved.confirmed!.axialScheme!.layout = { chainNormalOffsets: [{ chainId: 'chain', normalOffset: 1 }], candidateNormalOffsets: [] };
+    const after = projectEngineeringCadDrawing(document, moved, { profile: 'caxa-compatible', purpose: 'canvas' });
+    for (const candidate of scheme.candidates) {
+      const first = baseline.document.annotations.find((node): node is DimensionAnnotation => node.type === 'dimension' && node.engineeringIntentId === axialDimensionIntentId(candidate.id))!;
+      const second = after.document.annotations.find((node): node is DimensionAnnotation => node.id === first.id)!;
+      expect(second.textPosition[0]).toBeCloseTo(first.textPosition[0], 9);
+      expect(second.textPosition[1]).toBeCloseTo(first.textPosition[1] + 1, 9);
+      expect(second.definitionPoints.slice(0, 2)).toEqual(first.definitionPoints.slice(0, 2));
+      for (let index = 2; index < first.definitionPoints.length; index++) {
+        expect(second.definitionPoints[index]).toEqual([first.definitionPoints[index][0], first.definitionPoints[index][1] + 1]);
+      }
+      const a = baseline.dimensionPlacements.find(({ annotationId }) => annotationId === first.id)!;
+      const b = after.dimensionPlacements.find(({ annotationId }) => annotationId === first.id)!;
+      expect(b.textBounds.minY).toBeCloseTo(a.textBounds.minY + 1, 9);
+      expect(b.line!.witnessA).toEqual(a.line!.witnessA);
+      expect(b.line!.witnessB).toEqual(a.line!.witnessB);
+    }
+    expect(after.document.annotations.find(({ id }) => id === manual.id)).toEqual(manual);
+    expect(document.annotations).toEqual([manual]);
+    expect(plan.confirmed!.axialScheme!.layout).toBeUndefined();
+    expect(moved.confirmed!.axialScheme!.layout!.chainNormalOffsets).toEqual([{ chainId: 'chain', normalOffset: 1 }]);
   });
 
   it('applies, exports, undoes, and redoes u6 while preserving every unrelated annotation family', () => {
@@ -366,7 +508,7 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(appliedWithoutTargetTolerance).toEqual(before);
     const appliedDxf = exportEngineeringDrawingDxf(document, applied);
     expect(appliedDxf).toContain('u6');
-    expect(appliedDxf).toContain('\\S+0.044^+0.033;');
+    expect(appliedDxf).toContain('\\S+0.044^ +0.033;');
     expect(appliedDxf).toContain('H7');
     expect(appliedDxf).not.toContain('OLD9');
     expect(appliedDxf).toContain('VECTORAI');
@@ -438,6 +580,23 @@ function snapshot(options: {
 
 function entityCount(dxf: string, type: string): number {
   return (dxf.match(new RegExp(`(?:^|\\r?\\n)\\s*0\\r?\\n${type}\\r?\\n`, 'g')) ?? []).length;
+}
+
+function entityLayers(dxf: string, type: string): string[] {
+  const lines = dxf.split(/\r?\n/);
+  const result: string[] = [];
+  for (let index = 0; index + 1 < lines.length; index += 2) {
+    if (lines[index]?.trim() !== '0' || lines[index + 1]?.trim() !== type) continue;
+    for (let cursor = index + 2; cursor + 1 < lines.length; cursor += 2) {
+      const code = lines[cursor]?.trim();
+      if (code === '0') break;
+      if (code === '8') {
+        result.push(lines[cursor + 1]!);
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 function vectorAiXDataStrings(dxf: string): string[] {

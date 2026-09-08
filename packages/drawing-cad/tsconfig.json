@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "tsBuildInfoFile": "../../node_modules/.tmp/drawing-cad.tsbuildinfo"
+  },
+  "include": [
+    "src"
+  ]
+}

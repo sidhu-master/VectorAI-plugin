@@ -151,7 +151,8 @@ export class DimensionPlanStore {
         if (index < 0) throw new Error('SURFACE_TEXTURE_INTENT_UNKNOWN');
         const surfaceTextures = [...value.surfaceTextures];
         surfaceTextures[index] = command.type === 'surface-texture.layout'
-          ? { ...surfaceTextures[index]!, labelPosition: [...command.position] as [number, number] }
+          ? { ...surfaceTextures[index]!, labelPosition: [...command.position] as [number, number],
+            ...(command.facing === undefined ? {} : { labelFacing: command.facing }) }
           : {
             ...surfaceTextures[index]!, parameter: command.parameter, value: command.value,
             materialRemoval: command.materialRemoval, source: 'manual', status: 'resolved',

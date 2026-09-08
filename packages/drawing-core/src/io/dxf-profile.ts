@@ -40,6 +40,8 @@ export interface DxfDimensionStyle {
   textColor: number;
   decimalPlaces: number;
   angularDecimalPlaces: number;
+  /** Picture/native text rotation policy for angular dimensions. */
+  angularTextOrientation?: 'horizontal' | 'aligned';
   textStyle?: string;
   suppressOutsideDimensionLines?: boolean;
   forceDimensionLine?: boolean;
@@ -64,7 +66,19 @@ export interface DxfExportProfile {
   layers: readonly DxfLayerStyle[];
   lineTypes: readonly DxfLineType[];
   textStyles: readonly DxfTextStyle[];
+  /** Canonical plain TEXT width; defaults to the selected text style. Does not affect MTEXT. */
+  plainTextWidthFactor?: number;
   dimensionStyles: readonly DxfDimensionStyle[];
+  /** Optional paper proportions for material-removal-required surface texture marks. */
+  surfaceTexture?: {
+    /** Short and full long arm rise, measured from the tip in multiples of text height. */
+    shortRise: number;
+    longRise: number;
+    /** Interior angle between the two arms, in degrees. */
+    includedAngle: number;
+    /** Gap from the horizontal bar to the bottom of the text, in text heights. */
+    textGap: number;
+  };
 }
 
 export const DEFAULT_DXF_EXPORT_PROFILE: DxfExportProfile = {

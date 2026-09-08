@@ -308,7 +308,7 @@ describe('exportDrawingDxf', () => {
     expect(entity).toMatch(/1070\r\n48\r\n1040\r\n0\.01/);
     expect(entity).toMatch(/1070\r\n272\r\n1070\r\n3/);
     expect(entity).toContain('1002\r\n}');
-    expect(entity).not.toContain('\\S+0.02^-0.01;');
+    expect(entity).not.toContain('\\S+0.02^ -0.01;');
   });
 
   it('preserves positive same-sign fit deviations as explicit stacked text and compact semantic XDATA', () => {
@@ -324,8 +324,8 @@ describe('exportDrawingDxf', () => {
     const [entity] = dxfEntities(dxf, 'DIMENSION');
     const payload = entity?.match(/1001\r\nVECTORAI\r\n1000\r\n([^\r]+)/)?.[1];
 
-    expect(entity).toContain('\\S+0.044^+0.033;');
-    expect(entity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^+0.033;}}');
+    expect(entity).toContain('\\S+0.044^ +0.033;');
+    expect(entity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^ +0.033;}}');
     expect(entity).not.toContain('1001\r\nACAD');
     expect(payload).toBeDefined();
     expect(new TextEncoder().encode(payload).byteLength).toBeLessThan(255);
@@ -340,7 +340,7 @@ describe('exportDrawingDxf', () => {
     });
 
     const [defaultProfileEntity] = dxfEntities(exportDrawingDxf(document), 'DIMENSION');
-    expect(defaultProfileEntity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^+0.033;}}');
+    expect(defaultProfileEntity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^ +0.033;}}');
     expect(defaultProfileEntity).not.toContain('1001\r\nACAD');
   });
 
@@ -371,7 +371,7 @@ describe('exportDrawingDxf', () => {
     const inchDxf = exportDrawingDxf(inchDrawing, { profile: gbProfile });
     const [inchEntity] = dxfEntities(inchDxf, 'DIMENSION');
     expect(inchDxf).toContain('9\r\n$INSUNITS\r\n70\r\n1');
-    expect(inchEntity).toContain('\\S+0.001732283464566929^+0.001299212598425197;');
+    expect(inchEntity).toContain('\\S+0.001732283464566929^ +0.001299212598425197;');
     expect(inchEntity).not.toContain('1001\r\nACAD');
     expect(JSON.parse(vectorAiXDataStrings(inchEntity!)[0]!)).toMatchObject({
       upperDeviation: .044, lowerDeviation: .033, unit: 'mm',
@@ -471,7 +471,7 @@ describe('exportDrawingDxf', () => {
     expect(hole).toMatch(/1070\r\n47\r\n1040\r\n0\.018/);
     expect(hole).toMatch(/1070\r\n48\r\n1040\r\n0(?:\r\n|$)/);
     expect(shaft).toContain('g6');
-    expect(shaft).toContain('\\S-0.006^-0.017;');
+    expect(shaft).toContain('\\S-0.006^ -0.017;');
     expect(shaft).not.toContain('1001\r\nACAD');
 
     const [defaultProfileHole] = dxfEntities(exportDrawingDxf({ ...document, annotations: [document.annotations[0]!] }), 'DIMENSION');
@@ -496,7 +496,7 @@ describe('exportDrawingDxf', () => {
 
     const [override, designation] = dxfEntities(exportDrawingDxf(document, { profile: gbProfile }), 'DIMENSION');
 
-    expect(override).toContain('\\S+0.05^+0.04;');
+    expect(override).toContain('\\S+0.05^ +0.04;');
     expect(override).toContain('"upperDeviation":0.05');
     expect(override).toContain('"lowerDeviation":0.04');
     expect(designation).toContain('H7');
@@ -516,7 +516,7 @@ describe('exportDrawingDxf', () => {
 
     const [entity] = dxfEntities(exportDrawingDxf(document, { profile: gbProfile }), 'DIMENSION');
 
-    expect(entity).toContain('\\S+0.03^-0.02;');
+    expect(entity).toContain('\\S+0.03^ -0.02;');
     expect(entity).not.toContain('1001\r\nACAD');
     expect(entity).not.toContain('1001\r\nVECTORAI');
   });
@@ -556,7 +556,7 @@ describe('exportDrawingDxf', () => {
     expect(native).toContain('1001\r\nACAD');
     expect(native).toContain('1001\r\nVECTORAI');
     expect(fallback).toContain('%%C<>{\\C3;u6}');
-    expect(fallback).toContain('\\S+0.044^+0.033;');
+    expect(fallback).toContain('\\S+0.044^ +0.033;');
     expect(fallback).not.toContain('1001\r\nACAD');
     expect(fallback).toContain('1001\r\nVECTORAI');
   });
@@ -615,7 +615,7 @@ describe('exportDrawingDxf', () => {
 
     const dxf = exportDrawingDxf(document);
     const pictureArc = dxf.match(/0\r\nARC\r\n[\s\S]*?50\r\n([^\r]+)\r\n51\r\n([^\r]+)/);
-    const nativeDimension = dxf.match(/0\r\nDIMENSION\r\n[\s\S]*?10\r\n([^\r]+)\r\n20\r\n([^\r]+)/);
+    const nativeDimension = dxf.match(/0\r\nDIMENSION\r\n[\s\S]*?16\r\n([^\r]+)\r\n26\r\n([^\r]+)/);
 
     expect(pictureArc).not.toBeNull();
     expect(Number(pictureArc?.[1])).toBeCloseTo(330, 4);

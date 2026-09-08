@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:dsh-space": "node scripts/build-dsh-space.mjs space",
     "build:dsh-annotation": "node scripts/build-dsh-space.mjs annotation",
+    "build:cad-preview-app": "python3 tools/cad-preview-app/build_app.py",
     "sync:dsh-runtime-baseline": "node scripts/sync-dsh-runtime-baseline.mjs",
     "check:dsh-runtime-baseline": "node scripts/sync-dsh-runtime-baseline.mjs --check",
     "check:dsh-registry-readiness": "node scripts/check-dsh-registry-readiness.mjs",
@@ -21,6 +22,11 @@
     "release:dsh-plugins": "node scripts/release-dsh-plugins.mjs",
     "runtime:pack": "node scripts/build-vectorizer-runtime.mjs",
     "build:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos build",
+    "build:desktop": "pnpm --filter @vectorai/desktop build",
+    "test:desktop": "pnpm --filter @vectorai/desktop test",
+    "pack:desktop": "node scripts/pack-desktop.mjs",
+    "build:desktop-runtime": "node scripts/build-desktop-runtime.mjs",
+    "verify:desktop-runtime": "node scripts/verify-desktop-runtime.mjs",
     "install:dsh-alpha": "./scripts/install-dsh-alpha-runtime.sh",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -33,7 +39,7 @@
     "e2e:dxf-smart-partition": "tsx scripts/e2e-dxf-smart-partition.ts",
     "e2e:tolerance-data-foundation": "tsx scripts/e2e-tolerance-data-foundation.ts",
     "e2e:golden-dimension-chain": "tsx scripts/e2e-golden-dimension-chain.ts",
-    "test:cad-export": "vitest run packages/drawing-core/src/io/dxf.test.ts packages/plugin-dsh-annotation-host/src/cad-*.test.ts packages/plugin-dsh-annotation-host/src/engineering-dxf-export.test.ts packages/plugin-dsh-annotation-host/src/golden-engineering-export.integration.test.ts",
+    "test:cad-export": "vitest run packages/drawing-core/src/io/dxf*.test.ts packages/plugin-dsh-annotation-host/src/cad-*.test.ts packages/plugin-dsh-annotation-host/src/engineering-dxf-export.test.ts packages/plugin-dsh-annotation-host/src/golden-engineering-export.integration.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -68,6 +74,7 @@
     "typescript-eslint": "^8.30.1",
     "vite": "^6.3.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "yaml": "2.9.0"
   }
 }

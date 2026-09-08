@@ -3,7 +3,7 @@
 import type { DrawingDocument } from '@vectorai/drawing-core';
 import type { DrawingTransactionCommand } from '@vectorai/drawing-edit-protocol';
 
-import { applyDrawingTransaction, findDrawingNode } from './document-transaction';
+import { applyDrawingTransaction, findDrawingNode, withDimensionLayoutOwnership } from './document-transaction';
 
 export function invertDrawingTransaction(
   document: DrawingDocument,
@@ -33,6 +33,11 @@ function inverseFor(
     }];
   }
   if (command.type === 'annotation.move-text') {
+    if (located.node.type === 'dimension') {
+      return [inverseUpdate(
+        located.node as unknown as Record<string, unknown>, command.id, { textPosition: command.position },
+      )];
+    }
     return [{
       type: 'annotation.move-text',
       id: command.id,
@@ -41,10 +46,21 @@ function inverseFor(
     }];
   }
   const node = located.node as unknown as Record<string, unknown>;
-  return [{
+  return [inverseUpdate(node, command.id, command.changes)];
+}
+
+function inverseUpdate(
+  node: Record<string, unknown>,
+  id: string,
+  requestedChanges: Record<string, unknown>,
+): DrawingTransactionCommand {
+  const changes = withDimensionLayoutOwnership(node, requestedChanges);
+  return {
     type: 'node.update',
-    id: command.id,
-    changes: Object.fromEntries(Object.keys(command.changes).map((key) => [key, structuredClone(node[key])])) as never,
-    expected: structuredClone(command.changes),
-  }];
+    id,
+    changes: Object.fromEntries(Object.keys(changes).map((key) => [
+      key, node.type === 'dimension' && key === 'layout' ? structuredClone(node[key] ?? null) : structuredClone(node[key]),
+    ])) as never,
+    expected: structuredClone(changes),
+  };
 }

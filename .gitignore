@@ -10,6 +10,10 @@ lerna-debug.log*
 node_modules
 dist/npm/
 dist/vectorizer-runtime/
+dist/desktop-runtime/
+dist/desktop-installers/
+apps/vectorai-desktop/resources/runtime/*
+!apps/vectorai-desktop/resources/runtime/.gitkeep
 packages/plugin-dsh-space/lib/
 packages/plugin-dsh-space/LICENSE
 packages/plugin-dsh-annotation/lib/

@@ -55,6 +55,8 @@ export interface DrawingSurfaceProps {
   display?: Partial<DrawingWorkspaceDisplay>;
   sourceUrl?: string | null;
   worldLayers?: ReactNode;
+  /** Optional physical presentation; IDs and editing still belong to the snapshot. */
+  renderAnnotation?(node: AnnotationNode): ReactNode;
   screenLayers?: ReactNode;
   className?: string;
   fitToDrawingOnResize?: boolean | 'geometry';
@@ -85,6 +87,7 @@ export function DrawingSurface({
   display: displayInput,
   sourceUrl = null,
   worldLayers,
+  renderAnnotation,
   screenLayers,
   className = 'vai-canvas',
   fitToDrawingOnResize = false,
@@ -346,6 +349,7 @@ export function DrawingSurface({
         />
         {display.annotations ? <AnnotationLayer
           nodes={snapshot.document.annotations}
+          renderAnnotation={renderAnnotation}
           hiddenNodeId={annotationDragPreview?.id}
           viewport={viewport}
           selectedIds={selectedIds}
@@ -357,6 +361,7 @@ export function DrawingSurface({
         {display.annotations && annotationDragPreview !== null ? <g data-layer="annotation-drag-preview" pointerEvents="none">
           <EntityRenderer
             node={annotationDragPreview}
+            content={renderAnnotation?.(annotationDragPreview)}
             viewport={viewport}
             selected={selectedIds.includes(annotationDragPreview.id)}
             onSelect={IGNORE_SELECTION}

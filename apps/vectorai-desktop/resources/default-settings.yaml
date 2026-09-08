@@ -1,0 +1,13 @@
+llm-deepseek:
+  apiKeyEnv: VECTORAI_TEST_API_KEY
+  baseURL: https://ark.cn-beijing.volces.com/api/plan/v3
+  maxTokens: 131072
+  models:
+    - id: doubao-seed-2.0-lite
+      name: 维构 AI
+      contextWindow: 262144
+      inputModalities: [text, image]
+agent-default-model:
+  provider: deepseek-official
+  model: doubao-seed-2.0-lite
+  reasoningEffort: high

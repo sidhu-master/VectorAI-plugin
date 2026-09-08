@@ -6,7 +6,7 @@ import type {
   GeometryNode,
   Vec2,
 } from '@vectorai/drawing-core';
-import { splineBounds } from '@vectorai/drawing-core';
+import { leaderGeometryPoints, splineBounds } from '@vectorai/drawing-core';
 import { normalizeHatchRegion } from '@vectorai/drawing-hatch';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 
@@ -106,7 +106,7 @@ export function nodeBounds(node: DrawingRenderable): Bounds2D | null {
     case 'spline': return splineBounds(node);
     case 'text': return textBounds(node);
     case 'dimension': return boundsFromPoints([...node.definitionPoints, node.textPosition]);
-    case 'leader': return boundsFromPoints(node.points);
+    case 'leader': return boundsFromPoints(leaderGeometryPoints(node));
     case 'centerline': return extendedLineBounds(node.start, node.end, node.extension);
     case 'section-hatch': {
       if (node.hatch !== undefined) {

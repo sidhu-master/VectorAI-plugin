@@ -293,7 +293,7 @@ describe('AnnotationWorkspace', () => {
     const preview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
     const previewEntity = preview.findByProps({ 'data-entity-id': 'dimension-1' });
     expect(previewEntity.props['data-preview-diff']).toBe('updated');
-    expect(previewEntity.findByType('text').children.join('')).toBe('13 mm +0.044/+0.033');
+    expect(previewEntity.findAllByType('text').map((text) => text.children.join('')).join('|')).toBe('13 mm|+0.044|+0.033');
     expect(runtime.snapshot.getSnapshot()).toEqual(before.snapshot);
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
     expect(renderer!.root.findByType(DrawingSurface).props.viewport).toEqual(surfaceViewportBeforePreview);
@@ -313,16 +313,16 @@ describe('AnnotationWorkspace', () => {
     await act(async () => tolerance.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' }));
     act(() => tolerance.actions.setDisplayPreference('both'));
     expect(renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' })
-      .findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm u6 +0.044/+0.033');
+      .findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|'))
+      .toBe('13 mm|u6|+0.044|+0.033');
     await act(async () => tolerance.actions.previewOverride({ upperDeviation: .05, lowerDeviation: .04 }));
     expect(renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' })
-      .findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm u6 +0.05/+0.04');
+      .findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|'))
+      .toBe('13 mm|u6|+0.05|+0.04');
     act(() => tolerance.actions.restoreStandard());
     expect(renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' })
-      .findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm u6 +0.044/+0.033');
+      .findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|'))
+      .toBe('13 mm|u6|+0.044|+0.033');
 
     await act(async () => renderer!.root.findByType(TolerancePopup).props.onApply());
     expect(editTolerance).toHaveBeenCalledOnce();
@@ -332,8 +332,8 @@ describe('AnnotationWorkspace', () => {
     expect(setViewport).not.toHaveBeenCalled();
     expect(renderer!.root.findAllByProps({ 'data-tolerance-designation': 'dimension-1' })).toHaveLength(1);
     expect(tolerance.state.getSnapshot().canvasPreview).toBeNull();
-    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm u6 +0.044/+0.033');
+    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|'))
+      .toBe('13 mm|u6|+0.044|+0.033');
 
     tolerance.actions.requestClose();
     await act(async () => { await Promise.resolve(); });
@@ -358,21 +358,21 @@ describe('AnnotationWorkspace', () => {
     expect(tolerance.state.getSnapshot().preview).toMatchObject({ type: 'mating-fit', status: 'resolved' });
     expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1']);
     const fitPreview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
-    expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm g6 -0.002/-0.01');
+    expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|'))
+      .toBe('13 mm|g6|-0.002|-0.01');
 
     await act(async () => renderer!.root.findByProps({ 'aria-label': '撤销' }).props.onClick());
     expect(dimensionUndo).toHaveBeenCalledOnce();
     expect(tolerance.state.getSnapshot().canvasPreview).toBeNull();
     expect(renderer!.root.findAllByProps({ 'data-tolerance-preview': 'intent-1' })).toHaveLength(0);
-    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join('')).toBe('13 mm');
+    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|')).toBe('13 mm');
 
     await act(async () => renderer!.root.findByProps({ 'aria-label': '反撤销' }).props.onClick());
     expect(dimensionRedo).toHaveBeenCalledOnce();
     expect(tolerance.state.getSnapshot().canvasPreview).toBeNull();
     expect(renderer!.root.findAllByProps({ 'data-tolerance-preview': 'intent-1' })).toHaveLength(0);
-    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm u6 +0.044/+0.033');
+    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findAllByType('text').map((text) => text.children.join('')).join('|'))
+      .toBe('13 mm|u6|+0.044|+0.033');
 
     await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('shaft-fit'));
     const selectionBeforeBlank = runtime.selection.getSnapshot();
@@ -492,7 +492,7 @@ describe('AnnotationWorkspace', () => {
     const dimensionState = mutableObservable({
       plan: {
         version: 1 as const, phase: 'editing' as const, drawingRef: snapshot.ref,
-        draft: { version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], fitAssignments: [], chains: [], dependencies: [], diagnostics: [], axialScheme },
+        draft: { version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], fitAssignments: [], chains: [], dependencies: [], diagnostics: [], geometricTolerances: [], surfaceTextures: [], axialScheme },
         canUndo: false, canRedo: false, updatedAt: 1,
       },
       busy: false, previewHeld: false, error: null,

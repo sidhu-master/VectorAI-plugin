@@ -2,8 +2,11 @@
 
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import type { AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
+import { createEmptyDrawing } from '@vectorai/drawing-core';
+import { projectEngineeringCadDrawing } from '@vectorai/drawing-cad';
+import type { AxialDimensionScheme, DimensionPlanSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { DimensionChainOverlay, dimensionChainFitPadding } from './DimensionChainOverlay';
+import { CadPaperGraphics } from './CadPaperGraphics';
 
 const scheme = {
   topology: {
@@ -25,6 +28,104 @@ const scheme = {
 } as unknown as AxialDimensionScheme;
 
 describe('DimensionChainOverlay', () => {
+  it('uses shared physical paper graphics through zoom, the first chain drag, persistence and candidate context menus', async () => {
+    const drawing = createEmptyDrawing({ idFactory: { next: () => 'paper-chain-drawing' }, now: () => 1 });
+    drawing.geometry = [{
+      id: 'plate-outline' as never, type: 'polyline', visible: true, closed: true,
+      vertices: [[100, 196], [120, 196], [120, 204], [100, 204]].map(([x, y]) => ({ point: [x, y] as [number, number] })),
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const paperScheme = {
+      ...scheme,
+      topology: { ...scheme.topology, unit: 'mm', axis: {
+        origin: [100, 200], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 20, orientation: 'forward',
+      } },
+      diagnostics: [],
+    } as AxialDimensionScheme;
+    const makeScene = (current: AxialDimensionScheme) => projectEngineeringCadDrawing(drawing, {
+      version: 1, phase: 'editing', drawingRef: { drawingId: drawing.id, revision: 1 },
+      draft: {
+        version: 1, drawingRef: { drawingId: drawing.id, revision: 1 },
+        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], surfaceTextures: [],
+        chains: [], dependencies: [], diagnostics: [], axialScheme: current,
+      },
+    } as unknown as DimensionPlanSessionSnapshot, { profile: 'caxa-compatible', purpose: 'canvas' });
+    const scene = makeScene(paperScheme);
+    const onMoveChain = vi.fn();
+    const onSetTolerance = vi.fn();
+    const props = { scheme: paperScheme, radialExtent: 4, visible: true, paperScene: scene, onMoveChain, onSetTolerance };
+    const view = renderer.create(<DimensionChainOverlay {...props} scale={2} />);
+    const graphicPictures = () => view.root.findAllByType(CadPaperGraphics).map(({ props }) => props.picture);
+    const initialPictures = structuredClone(graphicPictures());
+    const textHeights = () => view.root.findAllByType('text').map(({ props }) => props['data-cap-height']);
+    const initialHeights = textHeights();
+
+    expect(initialPictures).toHaveLength(3);
+    expect(view.root.findAllByProps({ className: 'vai-dimension-chain-label' })).toHaveLength(0);
+    expect(view.root.findAll((node) => node.props['data-dimension-chain-bracket'] !== undefined)).toHaveLength(0);
+    const lineHitTarget = view.root.findByProps({ 'data-dimension-context-hit': 'local' });
+    expect(lineHitTarget.type).toBe('path');
+    expect(lineHitTarget.props.pointerEvents).toBe('stroke');
+    expect(lineHitTarget.props.stroke).toBe('transparent');
+    expect(lineHitTarget.props.strokeWidth).toBe(10);
+    for (const placement of scene.dimensionPlacements) {
+      const candidateId = placement.annotationId.replace('annotation:cad-axial:', '');
+      const interval = view.root.findByProps({ 'data-dimension-candidate-id': candidateId });
+      expect(interval.props['data-normal-offset']).toBeCloseTo(placement.line!.start[1] - 200, 8);
+      expect(interval.findByType(CadPaperGraphics).props.picture).toContainEqual(expect.objectContaining({
+        type: 'mtext', position: placement.textPosition, height: placement.footprint.textHeight,
+      }));
+    }
+    expect(initialHeights.every((height) => height === 3.5)).toBe(true);
+
+    act(() => view.update(<DimensionChainOverlay {...props} scale={4} />));
+    expect(graphicPictures()).toEqual(initialPictures);
+    expect(textHeights()).toEqual(initialHeights);
+
+    const group = view.root.findByProps({ 'data-dimension-chain-group': 'chain:overall' });
+    const target = { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() };
+    const pointer = { pointerId: 12, clientX: 300, currentTarget: target, preventDefault() {}, stopPropagation() {} };
+    act(() => group.props.onPointerDown({ ...pointer, button: 0, clientY: 100 }));
+    expect(graphicPictures()).toEqual(initialPictures);
+    act(() => group.props.onPointerMove({ ...pointer, clientY: 92 }));
+    await act(async () => group.props.onPointerUp({ ...pointer, clientY: 92 }));
+    expect(onMoveChain).toHaveBeenCalledExactlyOnceWith('chain:overall', 2);
+    const draggedPictures = structuredClone(graphicPictures());
+    const positionOfText = (picture: typeof initialPictures[number]) => picture.find((graphic) => graphic.type === 'mtext').position;
+    draggedPictures.forEach((picture, index) => {
+      const before = positionOfText(initialPictures[index]);
+      const after = positionOfText(picture);
+      expect(after[0]).toBeCloseTo(before[0], 8);
+      expect(after[1]).toBeCloseTo(before[1] + 2, 8);
+      const beforeWitnesses = initialPictures[index].filter((graphic) => graphic.type === 'line' && graphic.color === 0);
+      const afterWitnesses = picture.filter((graphic) => graphic.type === 'line' && graphic.color === 0);
+      expect(afterWitnesses.map(({ start }) => start)).toEqual(beforeWitnesses.map(({ start }) => start));
+    });
+
+    const persisted = { ...paperScheme, layout: { chainNormalOffsets: [{ chainId: 'chain:overall', normalOffset: 2 }], candidateNormalOffsets: [] } };
+    act(() => view.update(<DimensionChainOverlay {...props} scheme={persisted} paperScene={makeScene(persisted)} scale={4} />));
+    expect(graphicPictures().map(positionOfText)).toEqual(draggedPictures.map(positionOfText));
+    const local = view.root.findByProps({ 'data-dimension-candidate-id': 'local' });
+    act(() => local.props.onContextMenu({ preventDefault() {}, stopPropagation() {} }));
+    const menu = view.root.findByProps({ 'data-dimension-context-menu': 'local' });
+    act(() => menu.findByProps({ 'data-action': 'set-tolerance' }).props.onClick({ stopPropagation() {} }));
+    expect(onSetTolerance).toHaveBeenCalledExactlyOnceWith('dimension-intent:local');
+    view.unmount();
+  });
+
+  it('honors explicit hidden closures and restores legacy dashed closures when the hide is cleared', () => {
+    const hidden = { ...scheme, hiddenCandidateIds: ['closure'] };
+    const tree = renderer.create(<DimensionChainOverlay scheme={hidden} scale={2} visible />);
+    expect(tree.root.findAllByProps({ 'data-dimension-closure': true })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ 'data-dimension-displayed': true })).toHaveLength(2);
+    tree.update(<DimensionChainOverlay scheme={{ ...hidden, hiddenCandidateIds: [] }} scale={2} visible />);
+    expect(tree.root.findAllByProps({ 'data-dimension-closure': true })).toHaveLength(1);
+    tree.update(<DimensionChainOverlay scheme={{ ...hidden, hiddenCandidateIds: ['local', 'closure'] }} scale={2} visible />);
+    expect(tree.root.findAllByProps({ 'data-dimension-displayed': true })).toHaveLength(1);
+    expect(tree.root.findAllByProps({ 'data-dimension-closure': true })).toHaveLength(0);
+    tree.unmount();
+  });
+
   it('renders displayed spans and muted dashed closures in world coordinates', () => {
     const root = renderer.create(<DimensionChainOverlay scheme={scheme} scale={2} visible />).root;
     expect(root.findAllByProps({ 'data-dimension-displayed': true })).toHaveLength(2);

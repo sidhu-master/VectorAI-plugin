@@ -1,0 +1,59 @@
+appId: ai.weigou.vectorai
+productName: VectorAI
+asar: true
+
+directories:
+  output: ../../dist/desktop-installers
+
+files:
+  - dist/**
+  - package.json
+
+extraResources:
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/runtime-manifest.json
+    to: runtime/runtime-manifest.json
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/node
+    to: runtime/node
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/dsh
+    to: runtime/dsh
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/dsh/node_modules
+    to: runtime/dsh/node_modules
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/profile-seed
+    to: runtime/profile-seed
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/default-settings.yaml
+    to: runtime/default-settings.yaml
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/secrets
+    to: runtime/secrets
+  - from: ${env.VECTORAI_DESKTOP_RUNTIME_DIR}/licenses
+    to: runtime/licenses
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  minimumSystemVersion: 13.0.0
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  identity: null
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+  artifactName: VectorAI-${version}-mac-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: VectorAI-${version}-win-${arch}-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

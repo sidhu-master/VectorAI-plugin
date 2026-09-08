@@ -83,6 +83,13 @@ export function projectEngineeringAnnotations(input: {
       base.visible = existing.visible;
       base.textPosition = structuredClone(existing.textPosition);
       base.definitionPoints = structuredClone(existing.definitionPoints);
+      const generatedDisplay = base.displayText;
+      const ownsGeneratedText = existing.layout?.generatedText !== undefined && existing.displayText === existing.layout.generatedText;
+      if (existing.displayText !== undefined && !ownsGeneratedText) base.displayText = existing.displayText;
+      if (existing.layout === undefined) delete base.layout;
+      else base.layout = ownsGeneratedText
+        ? { ...structuredClone(existing.layout), generatedText: generatedDisplay }
+        : structuredClone(existing.layout);
       if (existing.sourceRef) base.sourceRef = structuredClone(existing.sourceRef);
     }
     annotations.push({
@@ -152,6 +159,7 @@ function projectTolerance(
 function defaultAnnotation(intent: DimensionIntent): DimensionAnnotation {
   const prefix = intent.kind === 'diameter' ? 'Ø' : intent.kind === 'radius' ? 'R' : '';
   const suffix = intent.kind === 'angular' ? '°' : '';
+  const displayText = `${prefix}${format(intent.nominalValue)}${suffix}`;
   return {
     id: `annotation_engineering_${stableKey(intent.id)}` as AnnotationId,
     type: 'dimension',
@@ -161,10 +169,11 @@ function defaultAnnotation(intent: DimensionIntent): DimensionAnnotation {
     associationStatus: 'resolved',
     targets: structuredClone(intent.targets),
     computedValue: intent.nominalValue,
-    displayText: `${prefix}${format(intent.nominalValue)}${suffix}`,
+    displayText,
     unit: intent.unit,
     textPosition: [0, 0],
     definitionPoints: [],
+    layout: { mode: 'automatic', generatedText: displayText },
   };
 }
 

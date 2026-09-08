@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   allocateAxialDimensionLanes,
+  axialDimensionSchemeSchema,
   drawingRefSchema,
   drawingDocumentSchema,
   drawingGroundingOverlaySchema,
@@ -36,6 +37,7 @@ import {
   partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
   engineeringAnnotationDraftSchema,
+  geometricToleranceEditCommandSchema,
   dimensionPlanSessionSnapshotSchema,
   dimensionSchemeEditCommandSchema,
   toleranceCatalogRequestSchema,
@@ -98,6 +100,14 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('round-trips explicit hidden dimension IDs while leaving legacy closure visibility unspecified', () => {
+    const legacy = axialScheme();
+    expect(axialDimensionSchemeSchema.parse(legacy)).not.toHaveProperty('hiddenCandidateIds');
+    const hidden = { ...legacy, hiddenCandidateIds: ['candidate:b'] };
+    expect(axialDimensionSchemeSchema.parse(JSON.parse(JSON.stringify(hidden)))).toEqual(hidden);
+    expect(axialDimensionSchemeSchema.safeParse({ ...legacy, hiddenCandidateIds: [3] }).success).toBe(false);
+  });
+
   it('allocates axial dimensions from short/inner to long/outer while packing equal spans', () => {
     const lanes = allocateAxialDimensionLanes([
       { id: 'long', span: 100, occupiedStart: 0, occupiedEnd: 100 },
@@ -201,6 +211,13 @@ describe('DSH drawing workspace wire schemas', () => {
       ...draft,
       surfaceTextures: [{ ...draft.surfaceTextures[0], value: 0 }],
     })).toThrow();
+    const moved = { ...draft, surfaceTextures: [{ ...draft.surfaceTextures[0], labelPosition: [12, 9], labelFacing: -1 }] };
+    expect(engineeringAnnotationDraftSchema.parse(JSON.parse(JSON.stringify(moved))).surfaceTextures[0].labelFacing).toBe(-1);
+    expect(() => engineeringAnnotationDraftSchema.parse({ ...moved, surfaceTextures: [{ ...moved.surfaceTextures[0], labelFacing: 0 }] })).toThrow();
+    const command = { type: 'surface-texture.layout', intentId: draft.surfaceTextures[0].id, position: [12, 9], expectedDrawingRef: drawingRef };
+    expect(geometricToleranceEditCommandSchema.parse(command)).not.toHaveProperty('facing');
+    expect(geometricToleranceEditCommandSchema.parse({ ...command, facing: -1 })).toMatchObject({ facing: -1 });
+    expect(() => geometricToleranceEditCommandSchema.parse({ ...command, facing: 0 })).toThrow();
   });
 
   it('defaults surfaceTextures for persisted version-1 drafts', () => {

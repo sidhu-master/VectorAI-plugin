@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { sampleSpline, type AnnotationNode, type DrawingDocument, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
+import { leaderArrowTriangles, leaderPaths, sampleSpline, type AnnotationNode, type DrawingDocument, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
 import { createHatchRenderPlan, normalizeHatchRegion } from '@vectorai/drawing-hatch';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
@@ -233,7 +233,7 @@ function renderNode(node: GeometryNode | AnnotationNode, color: string): string 
     case 'spline': return `<polyline points="${sampleSpline(node, { maxError: 0.1 }).map((point) => point.join(',')).join(' ')}" ${style}/>`;
     case 'text': return textBox(node.position, node.height, node.content, color);
     case 'dimension': return `${node.definitionPoints.length > 1 ? `<polyline points="${node.definitionPoints.map((point) => point.join(',')).join(' ')}" ${style}/>` : ''}${textBox(node.textPosition, 4, node.displayText ?? 'DIM', color)}`;
-    case 'leader': return `<polyline points="${node.points.map((point) => point.join(',')).join(' ')}" ${style}/>${textBox(node.points.at(-1) ?? [0, 0], node.textHeight, node.content, color)}`;
+    case 'leader': return `${leaderPaths(node).map((points) => `<polyline points="${points.map((point) => point.join(',')).join(' ')}" ${style}/>`).join('')}${node.callout?.type === 'detail' && node.points[0] ? `<circle cx="${node.points[0][0]}" cy="${node.points[0][1]}" r="${node.callout.radius}" ${style}/>` : ''}${leaderArrowTriangles(node).map((points) => `<polygon points="${points.map((point) => point.join(',')).join(' ')}" fill="${color}"/>`).join('')}${textBox(node.points.at(-1) ?? [0, 0], node.textHeight, node.content, color)}`;
     case 'centerline': return `<line x1="${node.start[0]}" y1="${node.start[1]}" x2="${node.end[0]}" y2="${node.end[1]}" stroke-dasharray="8 4" ${style}/>`;
     case 'section-hatch': {
       if (node.hatch === undefined) return (node.segments ?? []).map(({ start, end }) => `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" ${style}/>`).join('');

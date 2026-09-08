@@ -39,7 +39,9 @@
     "@deepseek-ai/dsh-user-questions": "0.1.2-rc.1",
     "@deepseek-ai/dsh-util-values": "0.1.2-rc.1",
     "@node-projects/acad-ts": "3.0.2",
+    "@vectorai/drawing-cad": "workspace:*",
     "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/drawing-hatch": "workspace:*",
     "@vectorai/engineering-annotation": "workspace:*",
     "@vectorai/plugin-space-contracts": "workspace:*",
     "officeparser": "7.8.0"

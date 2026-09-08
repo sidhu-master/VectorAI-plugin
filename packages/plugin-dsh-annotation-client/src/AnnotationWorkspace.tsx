@@ -2,10 +2,10 @@
 
 import type { DrawingLayerRegistry, DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
 import type { DimensionAnnotation, DrawingDocument, ToleranceProjection } from '@vectorai/drawing-core';
+import { projectEngineeringCadDrawing, type CadTextBounds } from '@vectorai/drawing-cad';
 import {
   DrawingSurface,
   DrawingLayerManager,
-  PreviewLayer,
   WorkspaceActivityBar,
   WorkspaceToolbarView,
   fitViewportToDrawing,
@@ -24,15 +24,16 @@ import type { PartitionController } from './partition-controller';
 import type { DimensionChainController } from './dimension-chain-controller';
 import type { GdtController } from './gdt-controller';
 import { runSharedAnnotationHistory } from './annotation-history';
-import { DimensionChainOverlay, dimensionChainFitPadding } from './DimensionChainOverlay';
+import { DimensionChainOverlay } from './DimensionChainOverlay';
 import { DimensionChainInspector } from './DimensionChainInspector';
 import { PartitionOverlay } from './PartitionOverlay';
 import { partitionSnapTolerance } from './partition-view-model';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
 import { DimensionPlanInspector } from './DimensionPlanInspector';
-import { GdtOverlay } from './GdtOverlay';
-import { SurfaceTextureOverlay } from './SurfaceTextureOverlay';
+import { CadSymbolOverlay } from './CadSymbolOverlay';
+import { CadPaperGraphics } from './CadPaperGraphics';
+import { cadSceneBounds, canvasDimensionPicture } from './cad-canvas-presentation';
 import { estimateGdtEvaluationLength, GdtInspector, type GdtEditorSelection } from './GdtInspector';
 import { ConfirmedPartitionInspector } from './ConfirmedPartitionInspector';
 import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-policy';
@@ -182,6 +183,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   ));
   const displayedDrawingRef = useRef<string | null>(null);
   const initializedViewportDrawingId = useRef<string | null>(null);
+  const initializedPaperDrawingId = useRef<string | null>(null);
   const canvasRootRef = useRef<HTMLElement | null>(null);
   const openingAngleVisible = layerVisibility[ANNOTATION_OPENING_ANGLE_LAYER_ID]
     ?? ANNOTATION_OPENING_ANGLE_LAYER.defaultVisible;
@@ -197,23 +199,37 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const hasDiameter = displaySnapshot?.document.annotations.some((annotation) => (
     annotation.type === 'dimension' && annotation.dimensionKind === 'diameter'
   )) ?? false;
-  const sharedDimensionPlan = dimensionState.plan.draft ?? dimensionState.plan.confirmed ?? dimensionPlan?.draft;
+  // Both controllers observe one Host plan. Use its newest snapshot, including
+  // freshly edited GD&T, rather than allowing the older controller to win.
+  const paperPlan = dimensionState.plan.updatedAt >= gdtState.plan.updatedAt ? dimensionState.plan : gdtState.plan;
+  const sharedDimensionPlan = paperPlan.draft ?? paperPlan.confirmed ?? dimensionPlan?.draft;
+  const paperScene = useMemo(() => displaySnapshot === null ? null : projectEngineeringCadDrawing(
+    displaySnapshot.document,
+    dimensionPlan?.draft && !paperPlan.draft && !paperPlan.confirmed ? { ...paperPlan, draft: dimensionPlan.draft } : paperPlan,
+    { profile: 'caxa-compatible', purpose: 'canvas' },
+  ), [displaySnapshot, paperPlan, dimensionPlan?.draft]);
+  const paperBounds = useMemo(() => displaySnapshot === null ? undefined : cadSceneBounds(projectEngineeringCadDrawing(
+    displaySnapshot.document,
+    dimensionPlan?.draft && !paperPlan.draft && !paperPlan.confirmed ? { ...paperPlan, draft: dimensionPlan.draft } : paperPlan,
+    { profile: 'caxa-compatible', purpose: 'canvas', annotationScale: 1 },
+  )), [displaySnapshot, paperPlan, dimensionPlan?.draft]);
+  const persistedAnnotationIds = useMemo(() => new Set(displaySnapshot?.document.annotations.map(({ id }) => id) ?? []), [displaySnapshot]);
   const surfaceSnapshot = useMemo(() => displaySnapshot === null ? null : ({
     ...displaySnapshot,
     document: {
       ...displaySnapshot.document,
       // Keep imported hatches and generated engineering dimensions. Source DXF
       // text remains hidden so the clean engineering canvas does not regress.
-      annotations: projectPersistedDimensionTolerances(displaySnapshot.document.annotations, sharedDimensionPlan).filter((annotation) => (
+      annotations: (paperScene?.document.annotations ?? projectPersistedDimensionTolerances(displaySnapshot.document.annotations, sharedDimensionPlan)).filter((annotation) => (
         annotation.type === 'section-hatch'
-        || (annotation.type === 'dimension' && (
+        || (annotation.type === 'dimension' && persistedAnnotationIds.has(annotation.id) && (
           (annotation.dimensionKind !== 'angular' || openingAngleVisible)
           && (annotation.dimensionKind !== 'diameter' || diameterVisible)
         ))
       )),
       relations: [],
     },
-  }), [diameterVisible, displaySnapshot, openingAngleVisible, sharedDimensionPlan]);
+  }), [diameterVisible, displaySnapshot, openingAngleVisible, sharedDimensionPlan, paperScene, persistedAnnotationIds]);
   const dimensionAnnotations = useMemo(() => surfaceSnapshot?.document.annotations.filter(
     (annotation): annotation is DimensionAnnotation => annotation.type === 'dimension',
   ) ?? [], [surfaceSnapshot]);
@@ -272,8 +288,8 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID]
     ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
-  const dimensionScheme = dimensionState.plan.draft?.axialScheme ?? dimensionState.plan.confirmed?.axialScheme;
-  const gdtPlan = gdtState.plan.draft ?? gdtState.plan.confirmed;
+  const dimensionScheme = sharedDimensionPlan?.axialScheme;
+  const gdtPlan = sharedDimensionPlan;
   const hasGdt = (gdtPlan?.geometricTolerances.length ?? 0) > 0;
   const hasDatums = (gdtPlan?.datums.length ?? 0) > 0;
   const hasSurfaceTextures = (gdtPlan?.surfaceTextures.length ?? 0) > 0;
@@ -336,24 +352,8 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       .filter((chain) => layerVisibility[dimensionChainLayerId(chain.id)] ?? true)
       .map(({ id }) => id) ?? [],
   ), [dimensionScheme, layerVisibility]);
-  const fitPadding = useMemo(() => {
-    if (!dimensionScheme || !dimensionChainVisible || !surfaceSnapshot) return 1.2;
-    const fitSize = { width: viewport.width, height: viewport.height };
-    let padding = 1.2;
-    for (let iteration = 0; iteration < 8; iteration += 1) {
-      const fitted = fitViewportToDrawing(surfaceSnapshot.document, fitSize, padding);
-      const next = dimensionChainFitPadding({
-        scheme: dimensionScheme,
-        radialExtent: dimensionRadialExtent,
-        scale: fitted.scale,
-        viewport: fitSize,
-      });
-      if (Math.abs(next - padding) < 0.001) return next;
-      padding = next;
-    }
-    return padding;
-  }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
-  const annotationFitPadding = Math.min(1.9, Math.max(1.32, fitPadding));
+  const fitPadding = 1.12;
+  const annotationFitPadding = fitPadding;
   const previousViewportSize = useRef<{ width: number; height: number } | null>(null);
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== undefined && (
     dimensionState.plan.phase !== 'idle' || dimensionState.plan.canUndo || dimensionState.plan.canRedo
@@ -417,20 +417,23 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     if (displaySnapshot === null) return undefined;
     if (!displaySnapshot.document.geometry.some(({ visible }) => visible)) return;
     const drawingId = displaySnapshot.ref.drawingId;
-    if (initializedViewportDrawingId.current === drawingId) return undefined;
+    const alreadyFitted = () => initializedViewportDrawingId.current === drawingId
+      && (!sharedDimensionPlan || initializedPaperDrawingId.current === drawingId);
+    if (alreadyFitted()) return undefined;
     const canvas = canvasRootRef.current;
     if (canvas === null) return undefined;
     let observer: ResizeObserver | undefined;
     const fitWhenVisible = () => {
-      if (initializedViewportDrawingId.current === drawingId) return true;
+      if (alreadyFitted()) return true;
       const bounds = canvas.getBoundingClientRect();
       if (!(bounds.width > 0 && bounds.height > 0)) return false;
       initializedViewportDrawingId.current = drawingId;
+      if (sharedDimensionPlan) initializedPaperDrawingId.current = drawingId;
       runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, {
         ...viewport,
         width: bounds.width,
         height: bounds.height,
-      }, annotationFitPadding));
+      }, annotationFitPadding, paperBounds));
       observer?.disconnect();
       return true;
     };
@@ -439,7 +442,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       observer.observe(canvas);
     }
     return () => observer?.disconnect();
-  }, [annotationFitPadding, displaySnapshot, runtime, viewport]);
+  }, [annotationFitPadding, displaySnapshot, runtime, viewport, paperBounds, sharedDimensionPlan]);
   useEffect(() => {
     const previous = previousViewportSize.current;
     previousViewportSize.current = { width: viewport.width, height: viewport.height };
@@ -695,6 +698,23 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           onSelectionChange={selectCanvasIds}
           onAnnotationChange={persistAnnotationChange}
           onInteractionActiveChange={setCanvasInteractionActive}
+          renderAnnotation={(node) => {
+            if (node.type !== 'dimension' || !paperScene) return undefined;
+            const preview = tolerancePreviewAnnotations.find(({ id }) => id === node.id);
+            const placement = paperScene.dimensionPlacements.find(({ annotationId }) => annotationId === node.id);
+            const dx = node.textPosition[0] - (placement?.textPosition[0] ?? node.textPosition[0]);
+            const dy = node.textPosition[1] - (placement?.textPosition[1] ?? node.textPosition[1]);
+            return <g data-cad-dimension={node.id} data-tolerance-preview={preview ? node.engineeringIntentId : undefined}>
+              <g data-entity-id={preview ? node.id : undefined} data-preview-diff={preview ? 'updated' : undefined}>
+                <CadPaperGraphics picture={canvasDimensionPicture(preview ?? node, paperScene)} profile={paperScene.profile} />
+              </g>
+              {placement && <rect data-cad-dimension-hit={node.id}
+                x={placement.textBounds.minX + dx - 1} y={placement.textBounds.minY + dy - 1}
+                width={placement.textBounds.maxX - placement.textBounds.minX + 2}
+                height={placement.textBounds.maxY - placement.textBounds.minY + 2}
+                style={{ fill: 'transparent', stroke: 'none', cursor: 'move' }} pointerEvents="all" />}
+            </g>;
+          }}
           onNodeContextMenu={(nodeId, event) => {
             const annotation = dimensionById.get(nodeId as never);
             if (annotation === undefined) return;
@@ -722,6 +742,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             {partitionOverlayVisible && !draft && confirmed && <PartitionOverlay draft={confirmed} mode={partitionView} previewHeld scale={viewport.scale} />}
             {dimensionScheme && <DimensionChainOverlay
               scheme={dimensionScheme}
+              paperScene={paperScene ?? undefined}
               scale={viewport.scale}
               radialExtent={dimensionRadialExtent}
               visible={dimensionChainVisible}
@@ -734,9 +755,6 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               toleranceByIntentId={toleranceByIntentId}
               onInteractionActiveChange={setCanvasInteractionActive}
             />}
-            {tolerancePreviewAnnotations.length > 0 && <g data-tolerance-preview={toleranceState.target?.dimensionIntentId} pointerEvents="none">
-              <PreviewLayer nodes={tolerancePreviewAnnotations} viewport={viewport} />
-            </g>}
             {dimensionAnnotations.filter(({ toleranceProjection }) => toleranceProjection !== undefined).map((annotation) => {
               const target = targetForAnnotation(annotation);
               if (target === null) return null;
@@ -755,38 +773,22 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
                   width={64 / Math.max(viewport.scale, 1e-6)} height={24 / Math.max(viewport.scale, 1e-6)} fill="transparent" />
               </g>;
             })}
-            {gdtPlan && (hasDatums || hasGdt) && <GdtOverlay
+            {gdtPlan && paperScene && <CadSymbolOverlay
+              scene={paperScene}
               draft={gdtPlan}
-              document={surfaceSnapshot.document}
               scale={viewport.scale}
-              viewport={viewport}
               datumVisible={datumVisible}
               gdtVisible={gdtVisible}
-              surfaceTextureVisible={surfaceTextureVisible}
+              textureVisible={surfaceTextureVisible}
               previewHeld={gdtState.previewHeld}
-              selectedIntentId={selectedGdtIntentId}
-              selectedSurfaceTextureId={gdtEditorSelection?.type === 'surface-texture' ? gdtEditorSelection.id : null}
-              onSelectDatum={(id) => setGdtEditorSelection({ type: 'datum', id })}
-              onSelectIntent={(id) => {
-                setSelectedGdtIntentId(id);
-                setGdtEditorSelection({ type: 'intent', id });
+              selectedId={gdtEditorSelection?.id ?? selectedGdtIntentId}
+              onSelect={(kind, id) => {
+                if (kind === 'gdt') setSelectedGdtIntentId(id);
+                setGdtEditorSelection({ type: kind === 'gdt' ? 'intent' : kind, id });
               }}
-              onSelectSurfaceTexture={(id) => setGdtEditorSelection({ type: 'surface-texture', id })}
-              onMoveDatum={(datumId, position) => gdt.actions.moveDatum(datumId, position)}
-              onMoveGdtGroup={(intentIds, position) => gdt.actions.moveFrame(intentIds, position)}
-              onInteractionActiveChange={setCanvasInteractionActive}
-            />}
-            {gdtPlan && hasSurfaceTextures && <SurfaceTextureOverlay
-              draft={gdtPlan}
-              document={surfaceSnapshot.document}
-              scale={viewport.scale}
-              visible={surfaceTextureVisible}
-              previewHeld={gdtState.previewHeld}
-              attachToGdt={gdtVisible && hasGdt}
-              onSelect={(id) => setGdtEditorSelection({ type: 'surface-texture', id })}
-              onMove={(intentId, position) => gdt.actions.edit({
-                type: 'surface-texture.layout', intentId, position: [...position] as [number, number],
-              })}
+              onMove={({ kind, ids, position, facing }) => kind === 'datum' ? gdt.actions.moveDatum(ids[0]!, position)
+                : kind === 'gdt' ? gdt.actions.moveFrame(ids, position)
+                : gdt.actions.edit({ type: 'surface-texture.layout', intentId: ids[0]!, position: [...position], facing })}
               onInteractionActiveChange={setCanvasInteractionActive}
             />}
           </>}
@@ -900,7 +902,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           fitPadding={annotationFitPadding}
           canUndo={gdtHistoryActive ? gdtState.plan.canUndo : dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo}
           canRedo={gdtHistoryActive ? gdtState.plan.canRedo : dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo}
-          onFit={(nextViewport) => runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, nextViewport, annotationFitPadding))}
+          onFit={(nextViewport) => runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, nextViewport, annotationFitPadding, paperBounds))}
           onUndo={() => gdtHistoryActive || dimensionHistoryActive
             ? runSharedAnnotationHistory(
               gdtHistoryActive ? () => gdt.actions.undo() : () => dimensionChain.actions.undo(),
@@ -1018,10 +1020,15 @@ function fitViewportForSnapshot(
   snapshot: DrawingWorkspaceSnapshot,
   viewport: DrawingWorkspaceViewport,
   padding: number,
+  paperBounds?: CadTextBounds,
 ): DrawingWorkspaceViewport {
   return fitViewportToDrawing({
     ...snapshot.document,
     annotations: snapshot.document.annotations.filter(({ type }) => type === 'section-hatch'),
+    geometry: [...snapshot.document.geometry, ...(paperBounds ? [
+      { id: 'paper-fit:min', type: 'point' as const, visible: true, quality: { status: 'confirmed' as const, evidenceRefs: [] }, x: paperBounds.minX, y: paperBounds.minY },
+      { id: 'paper-fit:max', type: 'point' as const, visible: true, quality: { status: 'confirmed' as const, evidenceRefs: [] }, x: paperBounds.maxX, y: paperBounds.maxY },
+    ] : [])],
   } as DrawingDocument, viewport, padding);
 }
 

@@ -29,20 +29,19 @@ pnpm preview
 
 ## 3. 构建和安装 DSH 插件
 
+本地开发使用与插件匹配的源码运行时，并通过 `file:` 安装两个 Bundle。直接传目录会形成指回仓库的 `link:`；Node 随后从仓库解析 DSH 外部依赖，无法使用 profile 上层由 DSH 自己维护的运行时依赖目录，可能在启动时出现 `ERR_MODULE_NOT_FOUND`。不要手工补 DSH 源码链接。
+
 ```bash
+VECTORAI_DSH_CLI="$HOME/Library/Application Support/VectorAI/dsh-runtime/0.1.3-alpha.1/apps/cli/lib/bin.js"
+
 pnpm build:dsh-space
-
-dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh-space
-```
-
-第二层自动标注插件独立构建、独立安装；本地开发时先安装第一层：
-
-```bash
 pnpm build:dsh-annotation
 
-dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh-space
-dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh-annotation
+"$VECTORAI_DSH_CLI" plugin --profile web add --workspace-root --config.auto-install-peers=false file:./packages/plugin-dsh-space
+"$VECTORAI_DSH_CLI" plugin --profile web add --workspace-root --config.auto-install-peers=false file:./packages/plugin-dsh-annotation
 ```
+
+`file:` 安装的是本地构建快照。后续修改源码时，重建受影响的 Bundle 后，重新执行对应的安装命令，再关闭并打开 DSH；仅重建不会刷新已安装的快照。两层都修改时保持 Space 在前、Annotation 在后的顺序。启动器源码的构建产物位于 `apps/dsh-launcher-macos/Build/DSH.app`，构建成功后还需替换实际打开的应用；旧启动器可能仍选择旧版运行时。
 
 Host 与 Client 源码包只是私有构建输入。构建结果会合并到两个 Bundle 的 `lib/` 中，不再分别安装或发布。
 

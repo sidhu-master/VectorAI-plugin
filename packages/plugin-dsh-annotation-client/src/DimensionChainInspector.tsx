@@ -39,7 +39,7 @@ export function DimensionChainInspector({ scheme, controller, editable = true }:
     <h3>显示尺寸</h3>
     <ul className="vai-dimension-chain-inspector__candidates">
       {scheme.candidates.filter(({ id }) => !scheme.closureCandidateIds.includes(id)).map((item) => {
-        const displayed = scheme.displayedCandidateIds.includes(item.id);
+        const displayed = scheme.displayedCandidateIds.includes(item.id) && !scheme.hiddenCandidateIds?.includes(item.id);
         return <li key={item.id}>
           <label><input type="checkbox" checked={displayed} disabled={!editable} onChange={(event) => {
             void controller.actions.setDisplayed(item.id, event.currentTarget.checked).catch(() => undefined);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  leaderGeometryPoints,
   splineBounds,
   type AnnotationNode,
   type DrawingDocument,
@@ -239,7 +240,7 @@ function boundsOfNode(node: Exclude<GeometryNode, { type: 'ray' | 'xline' }> | A
       return expandPoint(node.position, width, node.height);
     }
     case 'dimension': return fromPoints([...node.definitionPoints, node.textPosition]);
-    case 'leader': return fromPoints(node.points);
+    case 'leader': return fromPoints(leaderGeometryPoints(node));
     case 'centerline': return fromPoints([node.start, node.end]);
     case 'section-hatch': {
       if (node.hatch !== undefined) {
