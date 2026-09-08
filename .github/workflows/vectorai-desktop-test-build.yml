@@ -24,7 +24,7 @@ jobs:
           - runner: macos-15-intel
             target: darwin-x64
             artifact: VectorAI-${{ inputs.version }}-mac-x64.dmg
-          - runner: windows-2025
+          - runner: windows-2022
             target: win32-x64
             artifact: VectorAI-${{ inputs.version }}-win-x64-setup.exe
     runs-on: ${{ matrix.runner }}
