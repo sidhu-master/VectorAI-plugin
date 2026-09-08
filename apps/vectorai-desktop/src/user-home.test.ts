@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
 
-import { initializeUserHome } from './user-home.js';
+import { initializeUserHome, installedProfileVersion } from './user-home.js';
 
 const roots: string[] = [];
 
@@ -52,5 +52,19 @@ describe('initializeUserHome', () => {
     expect(await readFile(join(first.dshHome, 'sessions', 'kept.jsonl'), 'utf8')).toBe('{}\n');
     expect(await readFile(join(first.dshHome, 'profiles', 'web', 'cordis.yml'), 'utf8')).toBe('version: two\n');
     expect(await readFile(join(first.dshHome, '.vectorai-profile-version'), 'utf8')).toBe('two\n');
+  });
+
+  it('migrates a legacy profile from the same product version', async () => {
+    const input = await fixture();
+    const first = await initializeUserHome({ ...input, runtimeVersion: 'same-release' });
+    await writeFile(join(input.profileSeedPath, 'web', 'cordis.yml'), 'pruned-profile\n');
+
+    await initializeUserHome({
+      ...input,
+      runtimeVersion: installedProfileVersion('same-release'),
+    });
+
+    expect(await readFile(join(first.dshHome, 'profiles', 'web', 'cordis.yml'), 'utf8')).toBe('pruned-profile\n');
+    expect(await readFile(join(first.dshHome, '.vectorai-profile-version'), 'utf8')).toBe('same-release:profile-2\n');
   });
 });
