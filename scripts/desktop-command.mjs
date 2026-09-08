@@ -2,6 +2,14 @@
 
 const windowsCommandShims = new Set(['corepack', 'npm', 'npx', 'pnpm']);
 
+export function portableTarEnvironment(environment, platform = process.platform) {
+  if (platform !== 'win32') return environment;
+  return {
+    ...environment,
+    TAR_OPTIONS: [environment.TAR_OPTIONS, '--force-local'].filter(Boolean).join(' '),
+  };
+}
+
 export function platformInvocation(
   command,
   args,

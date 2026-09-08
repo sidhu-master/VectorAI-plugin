@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { platformInvocation } from './desktop-command.mjs';
+import { platformInvocation, portableTarEnvironment } from './desktop-command.mjs';
 
 describe('desktop subprocess commands', () => {
   it('uses executable command shims for Node package managers on Windows', () => {
@@ -31,5 +31,17 @@ describe('desktop subprocess commands', () => {
       command: 'tar',
       args: ['--force-local', '-tzf', 'D:\\bundle.tgz'],
     });
+  });
+
+  it('passes the same local-path rule to nested Windows tar subprocesses', () => {
+    assert.deepEqual(portableTarEnvironment({ PATH: 'bin' }, 'win32'), {
+      PATH: 'bin',
+      TAR_OPTIONS: '--force-local',
+    });
+    assert.equal(
+      portableTarEnvironment({ TAR_OPTIONS: '--warning=no-unknown-keyword' }, 'win32').TAR_OPTIONS,
+      '--warning=no-unknown-keyword --force-local',
+    );
+    assert.deepEqual(portableTarEnvironment({ PATH: 'bin' }, 'darwin'), { PATH: 'bin' });
   });
 });

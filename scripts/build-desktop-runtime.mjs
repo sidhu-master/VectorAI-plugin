@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
-import { platformInvocation } from './desktop-command.mjs';
+import { platformInvocation, portableTarEnvironment } from './desktop-command.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import {
   createPortableDshManifest,
@@ -56,8 +56,9 @@ try {
 
   const vendorPacks = join(temporaryRoot, 'dsh-vendor-packs');
   const dshPacks = join(temporaryRoot, 'dsh-packs');
-  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'vendor', '--out', vendorPacks], root);
-  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'dsh', '--out', dshPacks], root);
+  const dshPackEnvironment = portableTarEnvironment(process.env, target.platform);
+  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'vendor', '--out', vendorPacks], root, dshPackEnvironment);
+  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'dsh', '--out', dshPacks], root, dshPackEnvironment);
 
   await installNodeRuntime(output, temporaryRoot, target);
   const packedDshPackages = await readPackedPackages([vendorPacks, dshPacks]);
