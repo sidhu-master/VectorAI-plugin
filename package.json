@@ -24,7 +24,7 @@
     "build:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos build",
     "build:desktop": "pnpm --filter @vectorai/desktop build",
     "test:desktop": "pnpm --filter @vectorai/desktop test",
-    "pack:desktop": "pnpm --filter @vectorai/desktop pack",
+    "pack:desktop": "node scripts/pack-desktop.mjs",
     "build:desktop-runtime": "node scripts/build-desktop-runtime.mjs",
     "verify:desktop-runtime": "node scripts/verify-desktop-runtime.mjs",
     "install:dsh-alpha": "./scripts/install-dsh-alpha-runtime.sh",
