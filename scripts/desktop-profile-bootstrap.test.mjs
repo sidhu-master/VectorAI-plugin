@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 
 import {
   createLocalPackageOverrides,
+  localTarballSpecifier,
   pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
@@ -22,6 +23,13 @@ describe('desktop profile bootstrap', () => {
       '@deepseek-ai/dsh-tools': 'file:///tmp/dsh-tools.tgz',
       '@newwe/vectorai-plugin-dsh-space': 'file:///tmp/space.tgz',
     });
+  });
+
+  it('keeps Windows short-path tildes literal in npm file specifiers', () => {
+    assert.equal(
+      localTarballSpecifier('C:\\Users\\RUNNER~1\\bundle.tgz', 'win32'),
+      'file:C:/Users/RUNNER~1/bundle.tgz',
+    );
   });
 
   it('writes local overrides into the pnpm 11 workspace settings', () => {

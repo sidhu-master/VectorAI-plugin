@@ -3,9 +3,14 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function createLocalPackageOverrides(packed) {
+export function localTarballSpecifier(tarball, platform = process.platform) {
+  if (platform === 'win32') return `file:${tarball.replaceAll('\\', '/')}`;
+  return pathToFileURL(tarball).href;
+}
+
+export function createLocalPackageOverrides(packed, platform = process.platform) {
   return Object.fromEntries(packed.map(({ manifest, tarball }) => [
-    manifest.name, pathToFileURL(tarball).href,
+    manifest.name, localTarballSpecifier(tarball, platform),
   ]));
 }
 

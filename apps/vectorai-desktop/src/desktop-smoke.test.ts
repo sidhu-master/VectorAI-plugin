@@ -3,11 +3,13 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { desktopUnpackedDirectoryName, parseDesktopTarget } from '../../../scripts/desktop-runtime-plan.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
+const unpackedDirectory = desktopUnpackedDirectoryName(parseDesktopTarget(`${process.platform}-${process.arch}`));
 const executable = process.env.VECTORAI_DESKTOP_SMOKE_APP ?? (process.platform === 'darwin'
-  ? join(repositoryRoot, 'dist', 'desktop-installers', `mac-${process.arch}`, 'VectorAI.app', 'Contents', 'MacOS', 'VectorAI')
-  : join(repositoryRoot, 'dist', 'desktop-installers', 'win-unpacked', 'VectorAI.exe'));
+  ? join(repositoryRoot, 'dist', 'desktop-installers', unpackedDirectory, 'VectorAI.app', 'Contents', 'MacOS', 'VectorAI')
+  : join(repositoryRoot, 'dist', 'desktop-installers', unpackedDirectory, 'VectorAI.exe'));
 const roots: string[] = [];
 const instances: Array<Awaited<ReturnType<typeof launch>>> = [];
 
