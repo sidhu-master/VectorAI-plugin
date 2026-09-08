@@ -34,6 +34,22 @@ export function dshProductionInstallEnvironment(environment, cacheDirectory) {
   };
 }
 
+export function fsExtBuildCleanupPlan(platform) {
+  const buildRoot = 'node_modules/fs-ext/build';
+  return {
+    remove: [
+      `${buildRoot}/Release/.deps`,
+      `${buildRoot}/Release/obj.target`,
+      `${buildRoot}/Makefile`,
+      `${buildRoot}/binding.Makefile`,
+      `${buildRoot}/config.gypi`,
+      `${buildRoot}/fs_ext.target.mk`,
+      `${buildRoot}/gyp-mac-tool`,
+    ],
+    strip: platform === 'darwin' ? `${buildRoot}/Release/fs_ext.node` : undefined,
+  };
+}
+
 export function createPortableDshManifest(packages) {
   return {
     name: 'vectorai-embedded-dsh',

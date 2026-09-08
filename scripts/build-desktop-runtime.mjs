@@ -14,6 +14,7 @@ import {
   createPortableDshManifest,
   dshProductionInstallEnvironment,
   dshProductionInstallArgs,
+  fsExtBuildCleanupPlan,
   selectPackedRuntimeClosure,
 } from './desktop-dsh-closure.mjs';
 import {
@@ -84,6 +85,7 @@ try {
   const profilePackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
   const dshAdditionalPackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
   await installAdditionalDshPackages(output, dshAdditionalPackages, npmCache);
+  await cleanupNativeDshBuild(output, target);
   await writeFile(join(output, 'dsh', 'package.json'), `${JSON.stringify(
     createPortableDshManifest(uniquePackedPackages([...dshRuntimeClosure, ...dshAdditionalPackages])), null, 2,
   )}\n`);
@@ -281,6 +283,14 @@ async function installAdditionalDshPackages(output, packed, npmCache) {
     ...dshProductionInstallArgs(), '--no-save',
     ...packed.map(({ tarball }) => pathToFileURL(tarball).href),
   ], dshRoot, dshProductionInstallEnvironment(process.env, npmCache));
+}
+
+async function cleanupNativeDshBuild(output, target) {
+  const dshRoot = join(output, 'dsh');
+  const plan = fsExtBuildCleanupPlan(target.platform);
+  if (plan.strip) run('strip', ['-S', join(dshRoot, ...plan.strip.split('/'))], root);
+  await Promise.all(plan.remove.map((path) =>
+    rm(join(dshRoot, ...path.split('/')), { recursive: true, force: true })));
 }
 
 async function packedVectorizerTarball(target) {

@@ -67,6 +67,13 @@ for (const expected of ['name: 维构 AI', 'model: doubao-seed-2.0-lite', 'provi
 
 const credentialPath = join(runtimeRoot, 'secrets', 'vectorai-test-api-key');
 const credential = readFileSync(credentialPath, 'utf8');
+for (const manifestPath of [
+  join(runtimeRoot, 'dsh', 'package.json'),
+  join(seedHome, 'profiles', release.dsh.profile, 'package.json'),
+]) {
+  const content = readFileSync(manifestPath, 'utf8');
+  assert(!content.includes('file:'), `DESKTOP_LOCAL_PACKAGE_REFERENCE:${manifestPath.slice(runtimeRoot.length + 1)}`);
+}
 let bytes = 0;
 let files = 0;
 for (const path of walk(runtimeRoot)) {

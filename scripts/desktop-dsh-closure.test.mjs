@@ -7,6 +7,7 @@ import {
   createPortableDshManifest,
   dshProductionInstallEnvironment,
   dshProductionInstallArgs,
+  fsExtBuildCleanupPlan,
   selectPackedRuntimeClosure,
 } from './desktop-dsh-closure.mjs';
 
@@ -62,6 +63,22 @@ describe('desktop DSH packed closure', () => {
       NODE_PATH: '',
       npm_config_cache: '/tmp/vectorai-npm-cache',
     });
+  });
+
+  it('keeps the fs-ext addon but removes local native build metadata', () => {
+    assert.deepEqual(fsExtBuildCleanupPlan('darwin'), {
+      remove: [
+        'node_modules/fs-ext/build/Release/.deps',
+        'node_modules/fs-ext/build/Release/obj.target',
+        'node_modules/fs-ext/build/Makefile',
+        'node_modules/fs-ext/build/binding.Makefile',
+        'node_modules/fs-ext/build/config.gypi',
+        'node_modules/fs-ext/build/fs_ext.target.mk',
+        'node_modules/fs-ext/build/gyp-mac-tool',
+      ],
+      strip: 'node_modules/fs-ext/build/Release/fs_ext.node',
+    });
+    assert.equal(fsExtBuildCleanupPlan('win32').strip, undefined);
   });
 });
 
