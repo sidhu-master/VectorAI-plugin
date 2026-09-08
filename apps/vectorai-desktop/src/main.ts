@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { app, BrowserWindow, shell } from 'electron';
@@ -95,6 +96,9 @@ async function launch(): Promise<void> {
     const readyUrl = await manager.start();
     configureNavigation(window, readyUrl);
     await window.loadURL(readyUrl.href);
+    if (await ensureDesktopWorkspace(window, home.workspace)) {
+      await window.loadURL(new URL('/', readyUrl).href);
+    }
     await signalSmokeReady(readyUrl, manager.processIdentifier, window);
   } catch (error) {
     await manager?.stop();
@@ -108,13 +112,97 @@ async function launch(): Promise<void> {
 async function signalSmokeReady(readyUrl: URL, dshPid: number, target: BrowserWindow): Promise<void> {
   const readyFile = process.env.VECTORAI_DESKTOP_SMOKE_READY_FILE;
   if (readyFile) {
+    await exerciseSmokeDxfDrop(target);
     const page = await target.webContents.executeJavaScript(`({
       url: location.href,
       title: document.title,
       text: document.body?.innerText?.slice(0, 500) ?? '',
+      composerEditable: document.querySelector('[data-composer-input]')?.getAttribute('contenteditable') === 'true',
+      workspaceActive: document.querySelector('[data-vectorai-workspace-overlay]') !== null,
+      dropStatus: document.querySelector('.vai-engineering-drop')?.textContent ?? '',
     })`) as { url: string; title: string; text: string };
     await mkdir(dirname(readyFile), { recursive: true });
     await writeFile(readyFile, `${JSON.stringify({ url: readyUrl.href, dshPid, page })}\n`, 'utf8');
+  }
+}
+
+async function ensureDesktopWorkspace(target: BrowserWindow, workspacePath: string): Promise<boolean> {
+  const workspace = await callPageRemote(target, 'workspace/create', { path: workspacePath }) as {
+    workspace?: { workspaceId?: unknown; sessionIds?: unknown };
+  };
+  const workspaceId = workspace.workspace?.workspaceId;
+  const sessionIds = workspace.workspace?.sessionIds;
+  if (typeof workspaceId !== 'string' || !Array.isArray(sessionIds)) {
+    throw new Error('VECTORAI_DESKTOP_WORKSPACE_RESPONSE_INVALID');
+  }
+  if (sessionIds.length > 0) return false;
+  const session = await callPageRemote(target, 'session/create', { workspaceId }) as { sessionId?: unknown };
+  if (typeof session.sessionId !== 'string') throw new Error('VECTORAI_DESKTOP_SESSION_RESPONSE_INVALID');
+  return true;
+}
+
+async function callPageRemote(target: BrowserWindow, endpoint: string, request: object): Promise<unknown> {
+  const rpcId = `vectorai-desktop-${randomUUID()}`;
+  const path = `/api/${endpoint}`;
+  const body = JSON.stringify({
+    type: 'client-request',
+    rpcId,
+    method: endpoint,
+    payload: { args: { request } },
+  });
+  const result = await target.webContents.executeJavaScript(`(async () => {
+    const response = await fetch(${JSON.stringify(path)}, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: ${JSON.stringify(body)},
+    });
+    return { status: response.status, envelope: await response.json() };
+  })()` ) as {
+    status?: unknown;
+    envelope?: { rpcId?: unknown; result?: { ok?: unknown; value?: unknown; error?: { code?: unknown; message?: unknown } } };
+  };
+  if (result.status !== 200 || result.envelope?.rpcId !== rpcId) {
+    throw new Error(`VECTORAI_DESKTOP_RPC_TRANSPORT_FAILED:${endpoint}`);
+  }
+  if (result.envelope.result?.ok !== true) {
+    const error = result.envelope.result?.error;
+    throw new Error(`VECTORAI_DESKTOP_RPC_FAILED:${endpoint}:${String(error?.code)}:${String(error?.message)}`);
+  }
+  return result.envelope.result.value;
+}
+
+async function exerciseSmokeDxfDrop(target: BrowserWindow): Promise<void> {
+  const path = process.env.VECTORAI_DESKTOP_SMOKE_DXF_PATH;
+  if (!path) return;
+  const encoded = (await readFile(path)).toString('base64');
+  const filename = basename(path);
+  const status = await target.webContents.executeJavaScript(`(async () => {
+    const mountDeadline = Date.now() + 15000;
+    while (Date.now() < mountDeadline) {
+      const composerReady = document.querySelector('[data-composer-input]')?.getAttribute('contenteditable') === 'true';
+      const workspaceReady = document.querySelector('[data-vectorai-workspace-overlay]') !== null;
+      if (composerReady && workspaceReady) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bytes = Uint8Array.from(atob(${JSON.stringify(encoded)}), value => value.charCodeAt(0));
+    const file = new File([bytes], ${JSON.stringify(filename)}, { type: 'application/dxf' });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      document.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    }
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const text = document.querySelector('.vai-engineering-drop')?.textContent ?? '';
+      if (text.includes('图纸已打开')) return text;
+      if (text.includes('失败')) throw new Error(text);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error('VECTORAI_DESKTOP_DXF_DROP_TIMEOUT');
+  })()` ) as unknown;
+  if (typeof status !== 'string' || !status.includes(filename)) {
+    throw new Error('VECTORAI_DESKTOP_DXF_DROP_RESULT_INVALID');
   }
 }
 

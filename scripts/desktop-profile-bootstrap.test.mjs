@@ -2,15 +2,20 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import {
+import * as profileBootstrap from './desktop-profile-bootstrap.mjs';
+
+const {
   createLocalPackageOverrides,
   localTarballSpecifier,
   pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
   withLocalPackageOverrides,
-} from './desktop-profile-bootstrap.mjs';
+} = profileBootstrap;
 
 describe('desktop profile bootstrap', () => {
   const packed = [
@@ -73,5 +78,37 @@ describe('desktop profile bootstrap', () => {
   it('pins DSH profile mutations to the pnpm version that supports build allowlists', () => {
     assert.match(pnpmShimContents('darwin'), /corepack pnpm@11\.7\.0 "\$@"/u);
     assert.match(pnpmShimContents('win32'), /corepack pnpm@11\.7\.0 %\*/u);
+  });
+
+  it('keeps only profile-owned bundles and the platform runtime in the seeded node_modules', async () => {
+    assert.equal(typeof profileBootstrap.retainInstalledProfilePackages, 'function');
+    const root = await mkdtemp(join(tmpdir(), 'vectorai-profile-prune-'));
+    const modules = join(root, 'node_modules');
+    try {
+      for (const name of [
+        '@deepseek-ai/dsh-scope',
+        '@newwe/vectorai-plugin-dsh-space',
+        '@newwe/vectorai-plugin-dsh-annotation',
+        '@newwe/vectorai-vectorizer-darwin-arm64',
+        'sharp',
+      ]) {
+        const directory = join(modules, ...name.split('/'));
+        await mkdir(directory, { recursive: true });
+        await writeFile(join(directory, 'package.json'), '{}\n');
+      }
+
+      await profileBootstrap.retainInstalledProfilePackages(modules, [
+        '@newwe/vectorai-plugin-dsh-space',
+        '@newwe/vectorai-plugin-dsh-annotation',
+        '@newwe/vectorai-vectorizer-darwin-arm64',
+      ]);
+
+      await assert.doesNotReject(() => access(join(modules, '@newwe/vectorai-plugin-dsh-space/package.json')));
+      await assert.doesNotReject(() => access(join(modules, '@newwe/vectorai-vectorizer-darwin-arm64/package.json')));
+      await assert.rejects(() => access(join(modules, '@deepseek-ai/dsh-scope/package.json')), { code: 'ENOENT' });
+      await assert.rejects(() => access(join(modules, 'sharp/package.json')), { code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

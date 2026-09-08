@@ -31,6 +31,9 @@ describe('packaged VectorAI desktop', () => {
     instances.push(first);
     expect(first.ready.page.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
     expect(`${first.ready.page.title}\n${first.ready.page.text}`).not.toMatch(/401|unauthorized/u);
+    expect(first.ready.page.composerEditable).toBe(true);
+    expect(first.ready.page.workspaceActive).toBe(true);
+    expect(first.ready.page.dropStatus).toContain('图纸已打开：initial-shaft.dxf');
     const settings = await readFile(join(userData, 'dsh-home', 'settings.yaml'), 'utf8');
     expect(settings).toContain('name: 维构 AI');
     expect(settings).toContain('model: doubao-seed-2.0-lite');
@@ -69,6 +72,7 @@ async function launch(userData: string, name: string) {
       VECTORAI_DESKTOP_SMOKE_READY_FILE: readyFile,
       VECTORAI_DESKTOP_SMOKE_FAILURE_FILE: failureFile,
       VECTORAI_DESKTOP_SMOKE_CONTROL_FILE: controlFile,
+      VECTORAI_DESKTOP_SMOKE_DXF_PATH: join(repositoryRoot, 'packages', 'dxf-import', 'test', 'fixtures', 'initial-shaft.dxf'),
     },
   });
   const output: Buffer[] = [];
@@ -86,7 +90,14 @@ async function waitForReady(child: ChildProcess, path: string, failurePath: stri
       return JSON.parse(await readFile(path, 'utf8')) as {
         url: string;
         dshPid: number;
-        page: { url: string; title: string; text: string };
+        page: {
+          url: string;
+          title: string;
+          text: string;
+          composerEditable: boolean;
+          workspaceActive: boolean;
+          dropStatus: string;
+        };
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
