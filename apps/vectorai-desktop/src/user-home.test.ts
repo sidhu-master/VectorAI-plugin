@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -20,6 +20,11 @@ async function fixture() {
   const templatePath = join(root, 'default-settings.yaml');
   await mkdir(join(profileSeedPath, 'web'), { recursive: true });
   await writeFile(join(profileSeedPath, 'web', 'cordis.yml'), 'version: one\n');
+  await mkdir(join(profileSeedPath, 'web', 'node_modules', '@newwe', 'fixture'), { recursive: true });
+  await writeFile(
+    join(profileSeedPath, 'web', 'node_modules', '@newwe', 'fixture', 'package.json'),
+    '{"name":"@newwe/fixture"}\n',
+  );
   await writeFile(templatePath, 'model: initial\n');
   return { root, userData, profileSeedPath, templatePath };
 }
@@ -31,6 +36,9 @@ describe('initializeUserHome', () => {
     expect(await readFile(join(result.dshHome, 'settings.yaml'), 'utf8')).toBe('model: initial\n');
     expect(await readFile(join(result.dshHome, 'profiles', 'web', 'cordis.yml'), 'utf8')).toBe('version: one\n');
     expect(await readFile(join(result.dshHome, '.vectorai-profile-version'), 'utf8')).toBe('one\n');
+    const seededPackage = join(input.profileSeedPath, 'web', 'node_modules', '@newwe', 'fixture', 'package.json');
+    const installedPackage = join(result.dshHome, 'profiles', 'web', 'node_modules', '@newwe', 'fixture', 'package.json');
+    expect((await stat(installedPackage)).ino).toBe((await stat(seededPackage)).ino);
     expect(result).toMatchObject({
       dshHome: join(input.userData, 'dsh-home'),
       logs: join(input.userData, 'logs'),
@@ -65,6 +73,6 @@ describe('initializeUserHome', () => {
     });
 
     expect(await readFile(join(first.dshHome, 'profiles', 'web', 'cordis.yml'), 'utf8')).toBe('pruned-profile\n');
-    expect(await readFile(join(first.dshHome, '.vectorai-profile-version'), 'utf8')).toBe('same-release:profile-2\n');
+    expect(await readFile(join(first.dshHome, '.vectorai-profile-version'), 'utf8')).toBe('same-release:profile-3\n');
   });
 });
