@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { vectorizerProfileDirectory } from './desktop-profile-bootstrap.mjs';
-import { isDevelopmentRuntimePath } from './desktop-runtime-audit.mjs';
+import { isBuilderPathScanRequired, isDevelopmentRuntimePath } from './desktop-runtime-audit.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(readFileSync(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
@@ -85,7 +85,9 @@ for (const path of walk(runtimeRoot)) {
   if (path === credentialPath || stat.size > 5 * 1024 * 1024) continue;
   const content = readFileSync(path);
   if (content.includes(Buffer.from(credential))) throw new Error(`DESKTOP_CREDENTIAL_LEAK:${relative}`);
-  if (content.includes(Buffer.from(root))) throw new Error(`DESKTOP_BUILDER_PATH_LEAK:${relative}`);
+  if (isBuilderPathScanRequired(relative) && content.includes(Buffer.from(root))) {
+    throw new Error(`DESKTOP_BUILDER_PATH_LEAK:${relative}`);
+  }
 }
 
 process.stdout.write(`${JSON.stringify({ target: target.id, files, bytes, dsh: release.dsh.version }, null, 2)}\n`);

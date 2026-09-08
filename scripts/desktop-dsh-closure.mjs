@@ -40,7 +40,6 @@ export function fsExtBuildCleanupPlan(platform) {
     return {
       remove: [buildRoot],
       preserve: `${buildRoot}/Release/fs_ext.node`,
-      strip: `${buildRoot}/Release/fs_ext.node`,
     };
   }
   return {

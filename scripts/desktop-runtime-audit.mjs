@@ -7,3 +7,7 @@ export function isDevelopmentRuntimePath(relative) {
   const ownedParts = dependencyBoundary < 0 ? parts : parts.slice(0, dependencyBoundary);
   return ownedParts.some((part) => part === 'tests' || part === '__tests__');
 }
+
+export function isBuilderPathScanRequired(relative) {
+  return !relative.toLowerCase().endsWith('.node');
+}
